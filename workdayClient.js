@@ -55,19 +55,19 @@ export async function getAccessToken() {
 }
 
 /**
- * Fetch job postings from Workday.
- *
- * @param {Object} options
- * @param {number} [options.limit=50]
- * @param {number} [options.offset=0]
- * @param {string} [options.jobSiteId] - if provided, filter results by jobSite.id in Node
- * @returns {Promise<{ data: any[], total: number, raw: any }>}
+ * Fetch a single page of job postings from Workday.
+ * `limit` here is per-page and must not exceed 100 (Workday cap).
  */
-export async function fetchWorkdayJobs({ limit = 50, offset = 0, jobSiteId } = {}) {
+export async function fetchWorkdayJobsPage({
+  limit = 50,
+  offset = 0,
+  jobSiteId,
+} = {}) {
   if (!ENDPOINT) {
     throw new Error('Missing WORKDAY_REST_API_ENDPOINT env var');
   }
 
+  const cappedLimit = Math.min(Number(limit) || 50, 100);
   const accessToken = await getAccessToken();
 
   // ENDPOINT should be like:
@@ -75,7 +75,7 @@ export async function fetchWorkdayJobs({ limit = 50, offset = 0, jobSiteId } = {
   const base = ENDPOINT.replace(/\/$/, '');
   const jobsUrl = new URL(`${base}/jobPostings`);
 
-  jobsUrl.searchParams.set('limit', String(limit));
+  jobsUrl.searchParams.set('limit', String(cappedLimit));
   jobsUrl.searchParams.set('offset', String(offset));
 
   const res = await fetch(jobsUrl.toString(), {
@@ -114,5 +114,60 @@ export async function fetchWorkdayJobs({ limit = 50, offset = 0, jobSiteId } = {
     data: filtered,
     total: filtered.length,
     raw: json,
+  };
+}
+
+/**
+ * Fetch multiple pages until we have `maxJobs` (or we run out of data).
+ *
+ * @param {Object} options
+ * @param {number} [options.pageSize=100]   - per-page size (capped at 100)
+ * @param {number} [options.maxJobs=300]    - max number of jobs to return
+ * @param {number} [options.initialOffset=0]
+ * @param {string} [options.jobSiteId]
+ */
+export async function fetchAllWorkdayJobs({
+  pageSize = 100,
+  maxJobs = 300,
+  initialOffset = 0,
+  jobSiteId,
+} = {}) {
+  const cappedPageSize = Math.min(Number(pageSize) || 100, 100);
+  const max = Number(maxJobs) || cappedPageSize;
+
+  let offset = Number(initialOffset) || 0;
+  const all = [];
+
+  // Safety cap on pages so we don't accidentally loop forever
+  const maxPages = Math.ceil(max / cappedPageSize) + 2;
+  let pagesFetched = 0;
+
+  while (all.length < max && pagesFetched < maxPages) {
+    const page = await fetchWorkdayJobsPage({
+      limit: cappedPageSize,
+      offset,
+      jobSiteId,
+    });
+
+    if (!page.data.length) break;
+
+    all.push(...page.data);
+
+    if (page.data.length < cappedPageSize) {
+      // Last page reached
+      break;
+    }
+
+    offset += cappedPageSize;
+    pagesFetched += 1;
+  }
+
+  if (all.length > max) {
+    all.length = max;
+  }
+
+  return {
+    data: all,
+    total: all.length,
   };
 }
