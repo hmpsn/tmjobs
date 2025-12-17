@@ -54,7 +54,7 @@ export default async function handler(req, res) {
 
     // 2) Call jobPostings endpoint
     const base = endpoint.replace(/\/$/, ''); // strip trailing slash if any
-    const jobsUrl = new URL(`${base}/recruiting/jobPostings`);
+    const jobsUrl = new URL(`${base}/jobPostings`);
     jobsUrl.searchParams.set('limit', String(limit));
     jobsUrl.searchParams.set('offset', String(offset));
 
