@@ -1,92 +1,113 @@
-// workdayClient.js
+// api/jobs.js
 
-const TOKEN_URL = process.env.WORKDAY_TOKEN_URL;
-const REST_API_ENDPOINT = process.env.WORKDAY_REST_API_ENDPOINT;
-const CLIENT_ID = process.env.WORKDAY_CLIENT_ID;
-const CLIENT_SECRET = process.env.WORKDAY_CLIENT_SECRET;
-const REFRESH_TOKEN = process.env.WORKDAY_REFRESH_TOKEN;
+// Vercel serverless function to proxy Workday job postings.
+// Usage:
+//   GET /api/jobs?limit=50&offset=0&jobSite=0f6a837537ec1041c0b87fe65b930001
 
-if (!TOKEN_URL || !REST_API_ENDPOINT || !CLIENT_ID || !CLIENT_SECRET || !REFRESH_TOKEN) {
-  throw new Error('Missing one or more Workday env vars');
-}
+export default async function handler(req, res) {
+  try {
+    const tokenUrl = process.env.WORKDAY_TOKEN_URL;
+    const endpoint = process.env.WORKDAY_REST_API_ENDPOINT;
+    const clientId = process.env.WORKDAY_CLIENT_ID;
+    const clientSecret = process.env.WORKDAY_CLIENT_SECRET;
+    const refreshToken = process.env.WORKDAY_REFRESH_TOKEN;
 
-/**
- * Get an access token using the refresh token.
- */
-async function getAccessToken() {
-  const body = new URLSearchParams({
-    grant_type: 'refresh_token',
-    client_id: CLIENT_ID,
-    client_secret: CLIENT_SECRET,
-    refresh_token: REFRESH_TOKEN,
-  });
+    if (!tokenUrl || !endpoint || !clientId || !clientSecret || !refreshToken) {
+      return res.status(500).json({ error: 'Missing Workday env vars' });
+    }
 
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: body.toString(),
-  });
+    // Read query params (with sane defaults)
+    const limit = Number(req.query?.limit ?? 50);
+    const offset = Number(req.query?.offset ?? 0);
+    const jobSite = req.query?.jobSite;
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Workday token error ${res.status}: ${text}`);
+    // ─────────────────────────────────────────────────────────────
+    // 1) Get access token using refresh token
+    // ─────────────────────────────────────────────────────────────
+    const tokenBody = new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+    });
+
+    const tokenRes = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: tokenBody.toString(),
+    });
+
+    if (!tokenRes.ok) {
+      const text = await tokenRes.text();
+      console.error('Workday token error:', tokenRes.status, text);
+      return res
+        .status(500)
+        .json({ error: 'Failed to get Workday access token', details: text });
+    }
+
+    const tokenJson = await tokenRes.json();
+    const accessToken = tokenJson.access_token;
+
+    if (!accessToken) {
+      console.error('No access_token in token response:', tokenJson);
+      return res
+        .status(500)
+        .json({ error: 'No access_token in Workday token response', details: tokenJson });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 2) Call jobPostings endpoint
+    //    For this tenant, the base is:
+    //    https://wd2-impl-services1.workday.com/ccx/api/recruiting/v4/tcbrands_preview
+    //    so we hit {base}/jobPostings
+    // ─────────────────────────────────────────────────────────────
+    const base = endpoint.replace(/\/$/, '');
+    const jobsUrl = new URL(`${base}/jobPostings`);
+
+    jobsUrl.searchParams.set('limit', String(limit));
+    jobsUrl.searchParams.set('offset', String(offset));
+
+    // Optional filter by jobSite, e.g. ?jobSite=0f6a837537ec1041c0b87fe65b930001
+    if (jobSite) {
+      jobsUrl.searchParams.set('jobSite', String(jobSite));
+    }
+
+    const jobsRes = await fetch(jobsUrl.toString(), {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+      },
+    });
+
+    const jobsText = await jobsRes.text();
+
+    if (!jobsRes.ok) {
+      console.error('Workday jobs error:', jobsRes.status, jobsText);
+      return res.status(500).json({
+        error: 'Failed to fetch Workday jobs',
+        status: jobsRes.status,
+        body: jobsText,
+      });
+    }
+
+    let jobsJson;
+    try {
+      jobsJson = JSON.parse(jobsText);
+    } catch (e) {
+      console.error('Failed to parse jobs JSON:', e, jobsText);
+      return res.status(500).json({
+        error: 'Invalid JSON from Workday jobs endpoint',
+        body: jobsText,
+      });
+    }
+
+    // For now: return raw Workday response (you can normalize later)
+    return res.status(200).json(jobsJson);
+  } catch (err) {
+    console.error('Unexpected error in /api/jobs:', err);
+    return res.status(500).json({ error: 'Unexpected error', details: String(err) });
   }
-
-  const json = await res.json();
-  if (!json.access_token) {
-    throw new Error(`No access_token in token response: ${JSON.stringify(json)}`);
-  }
-
-  return json.access_token;
 }
-
-/**
- * Fetch raw job postings from Workday.
- * You can add query params here as needed (filters, etc).
- */
-async function fetchWorkdayJobs({ limit = 50, offset = 0 } = {}) {
-  const accessToken = await getAccessToken();
-
-  // Build URL like: {REST_API_ENDPOINT}/recruiting/jobPostings?limit=50&offset=0
-  const url = new URL(`${REST_API_ENDPOINT.replace(/\/$/, '')}/recruiting/jobPostings`);
-  url.searchParams.set('limit', String(limit));
-  url.searchParams.set('offset', String(offset));
-
-  const res = await fetch(url.toString(), {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: 'application/json',
-    },
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Workday jobs error ${res.status}: ${text}`);
-  }
-
-  const data = await res.json();
-  return data;
-}
-
-// Example normalizer stub you can customize once you see the payload
-function normalizeJob(posting) {
-  return {
-    id: posting.id,
-    title: posting.jobPostingTitle,
-    // TODO: map the fields once you see one real posting
-  };
-}
-
-function normalizeJobsResponse(raw) {
-  const items = raw?.data || raw?.jobPostings || raw || [];
-  return Array.isArray(items) ? items.map(normalizeJob) : [];
-}
-
-module.exports = {
-  getAccessToken,
-  fetchWorkdayJobs,
-  normalizeJobsResponse,
-};
