@@ -78,45 +78,19 @@ export default async function handler(req, res) {
         .json({ error: 'Failed to fetch Workday jobs', status: jobsRes.status, body: jobsText });
     }
 
-// If OK, try to parse JSON
-let jobsJson;
-try {
-  jobsJson = JSON.parse(jobsText);
-} catch (e) {
-  console.error('Failed to parse jobs JSON:', e, jobsText);
-  return res
-    .status(500)
-    .json({ error: 'Invalid JSON from Workday jobs endpoint', body: jobsText });
-}
+    // If OK, try to parse JSON
+    let jobsJson;
+    try {
+      jobsJson = JSON.parse(jobsText);
+    } catch (e) {
+      console.error('Failed to parse jobs JSON:', e, jobsText);
+      return res
+        .status(500)
+        .json({ error: 'Invalid JSON from Workday jobs endpoint', body: jobsText });
+    }
 
-// --- Filter for TravisMathew-Careers URLs ----------------------------------
-const TRAVIS_URL_SUBSTRING = 'TravisMathew-Careers';
-
-// Depending on how Workday structures the response, it might be:
-//   { data: [ ...postings ] } or { jobPostings: [ ... ] } or just [ ... ].
-// So we normalize to an array first:
-const items =
-  Array.isArray(jobsJson)        ? jobsJson
-  : Array.isArray(jobsJson.data) ? jobsJson.data
-  : Array.isArray(jobsJson.jobPostings) ? jobsJson.jobPostings
-  : [];
-
-const filtered = items.filter(posting => {
-  // Adjust these keys once you confirm which one has the public URL
-  const url =
-    posting.externalUrl ||
-    posting.jobPostingUrl ||
-    posting.jobPostingDetails?.externalUrl ||
-    '';
-
-  return typeof url === 'string' && url.includes(TRAVIS_URL_SUBSTRING);
-});
-
-// If you want to keep structure consistent (e.g. { data: [...] }), wrap it:
-return res.status(200).json({
-  data: filtered,
-  total: filtered.length,
-});
+    // For now, just return raw Workday response
+    return res.status(200).json(jobsJson);
   } catch (err) {
     console.error('Unexpected error in /api/jobs:', err);
     return res.status(500).json({ error: 'Unexpected error', details: String(err) });
