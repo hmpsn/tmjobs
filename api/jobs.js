@@ -57,6 +57,9 @@ export default async function handler(req, res) {
     const jobsUrl = new URL(`${base}/jobPostings`);
     jobsUrl.searchParams.set('limit', String(limit));
     jobsUrl.searchParams.set('offset', String(offset));
+    if (req.query && req.query.jobSite) {
+  jobsUrl.searchParams.set('jobSite', String(req.query.jobPostingSite));
+}
 
     const jobsRes = await fetch(jobsUrl.toString(), {
       method: 'GET',
