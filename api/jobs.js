@@ -1,26 +1,52 @@
 // api/jobs.js
 // Vercel serverless function that exposes Workday job postings.
-// Relies on workdayClient.js in the project root.
+// Uses workdayClient.js for single-page and multi-page fetching.
 
-import { fetchWorkdayJobs } from '../workdayClient.js';
+import { fetchWorkdayJobsPage, fetchAllWorkdayJobs } from '../workdayClient.js';
 
 // Usage examples:
-//   GET /api/jobs
-//   GET /api/jobs?limit=50&offset=0
-//   GET /api/jobs?jobSite=0f6a837537ec1041c0b87fe65b930001
+//   GET /api/jobs                      -> first 50 jobs (default)
+//   GET /api/jobs?limit=100            -> first 100 jobs
+//   GET /api/jobs?limit=250            -> first 250 jobs (auto-paginates behind the scenes)
+//   GET /api/jobs?jobSite=0f6a8...     -> only that jobSite, up to 50
+//   GET /api/jobs?jobSite=0f6a8...&limit=300 -> jobSite-filtered, up to 300 (multi-page)
 
 export default async function handler(req, res) {
   try {
-    const limit = Number(req.query?.limit ?? 50);
-    const offset = Number(req.query?.offset ?? 0);
-    const jobSiteId = req.query?.jobSite; // this is the jobSite.id (e.g. 0f6a8375...)
+    const limitParam = req.query?.limit;
+    const offsetParam = req.query?.offset;
+    const jobSiteId = req.query?.jobSite;
+    const allParam = req.query?.all;      // if all=true, we auto-paginate
 
-    const result = await fetchWorkdayJobs({ limit, offset, jobSiteId });
+    // "limit" here means "how many jobs total you want back"
+    const requestedLimit = Number(limitParam ?? 50) || 50;
+    const offset = Number(offsetParam ?? 0) || 0;
 
-    // Return a clean shape for the frontend:
-    // data: array of postings
-    // total: count
-    // (raw is available if you want to debug, but we don't return it here)
+    // Per-page size we ask Workday for (capped at 100)
+    const pageSize = Math.min(requestedLimit, 100);
+
+    const shouldPaginate =
+      requestedLimit > 100 || allParam === 'true';
+
+    let result;
+
+    if (shouldPaginate) {
+      // Multi-page mode: gather up to `requestedLimit` jobs via multiple calls
+      result = await fetchAllWorkdayJobs({
+        pageSize,
+        maxJobs: requestedLimit,
+        initialOffset: offset,
+        jobSiteId,
+      });
+    } else {
+      // Single page is enough
+      result = await fetchWorkdayJobsPage({
+        limit: pageSize,
+        offset,
+        jobSiteId,
+      });
+    }
+
     return res.status(200).json({
       data: result.data,
       total: result.total,
