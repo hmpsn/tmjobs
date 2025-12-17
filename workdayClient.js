@@ -18,10 +18,10 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Missing Workday env vars' });
     }
 
-    // Read query params (with defaults)
+    // Query params from the request
     const limit = Number(req.query?.limit ?? 50);
     const offset = Number(req.query?.offset ?? 0);
-    const requestedJobSiteId = req.query?.jobSite; // e.g. 0f6a8...
+    const requestedJobSiteId = req.query?.jobSite; // e.g. 0f6a8375...
 
     // ─────────────────────────────────────────────────────────────
     // 1) Get access token using refresh token
@@ -60,7 +60,7 @@ export default async function handler(req, res) {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // 2) Call jobPostings endpoint (NO jobSite filter here)
+    // 2) Call jobPostings endpoint (NO jobSite param here)
     //    WORKDAY_REST_API_ENDPOINT should be:
     //    https://wd2-impl-services1.workday.com/ccx/api/recruiting/v4/tcbrands_preview
     //    so we hit {base}/jobPostings
@@ -70,6 +70,8 @@ export default async function handler(req, res) {
 
     jobsUrl.searchParams.set('limit', String(limit));
     jobsUrl.searchParams.set('offset', String(offset));
+
+    console.log('Calling Workday URL:', jobsUrl.toString());
 
     const jobsRes = await fetch(jobsUrl.toString(), {
       method: 'GET',
@@ -114,7 +116,6 @@ export default async function handler(req, res) {
       ? items.filter(p => p.jobSite?.id === requestedJobSiteId)
       : items;
 
-    // Return a consistent shape (data + total)
     return res.status(200).json({
       data: filtered,
       total: filtered.length,
