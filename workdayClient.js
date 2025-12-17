@@ -1,8 +1,10 @@
 // api/jobs.js
 
 // Vercel serverless function to proxy Workday job postings.
-// Usage:
-//   GET /api/jobs?limit=50&offset=0&jobSite=0f6a837537ec1041c0b87fe65b930001
+// Usage examples:
+//   GET /api/jobs
+//   GET /api/jobs?limit=50&offset=0
+//   GET /api/jobs?jobSite=0f6a837537ec1041c0b87fe65b930001
 
 export default async function handler(req, res) {
   try {
@@ -16,10 +18,10 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Missing Workday env vars' });
     }
 
-    // Read query params (with sane defaults)
+    // Read query params (with defaults)
     const limit = Number(req.query?.limit ?? 50);
     const offset = Number(req.query?.offset ?? 0);
-    const jobSite = req.query?.jobSite;
+    const requestedJobSiteId = req.query?.jobSite; // e.g. 0f6a8...
 
     // ─────────────────────────────────────────────────────────────
     // 1) Get access token using refresh token
@@ -58,8 +60,8 @@ export default async function handler(req, res) {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // 2) Call jobPostings endpoint
-    //    For this tenant, the base is:
+    // 2) Call jobPostings endpoint (NO jobSite filter here)
+    //    WORKDAY_REST_API_ENDPOINT should be:
     //    https://wd2-impl-services1.workday.com/ccx/api/recruiting/v4/tcbrands_preview
     //    so we hit {base}/jobPostings
     // ─────────────────────────────────────────────────────────────
@@ -68,11 +70,6 @@ export default async function handler(req, res) {
 
     jobsUrl.searchParams.set('limit', String(limit));
     jobsUrl.searchParams.set('offset', String(offset));
-
-    // Optional filter by jobSite, e.g. ?jobSite=0f6a837537ec1041c0b87fe65b930001
-    if (jobSite) {
-      jobsUrl.searchParams.set('jobSite', String(jobSite));
-    }
 
     const jobsRes = await fetch(jobsUrl.toString(), {
       method: 'GET',
@@ -104,8 +101,24 @@ export default async function handler(req, res) {
       });
     }
 
-    // For now: return raw Workday response (you can normalize later)
-    return res.status(200).json(jobsJson);
+    // ─────────────────────────────────────────────────────────────
+    // 3) Normalize to an array + apply jobSite filter in Node
+    // ─────────────────────────────────────────────────────────────
+    const items =
+      Array.isArray(jobsJson) ? jobsJson :
+      Array.isArray(jobsJson.data) ? jobsJson.data :
+      Array.isArray(jobsJson.jobPostings) ? jobsJson.jobPostings :
+      [];
+
+    const filtered = requestedJobSiteId
+      ? items.filter(p => p.jobSite?.id === requestedJobSiteId)
+      : items;
+
+    // Return a consistent shape (data + total)
+    return res.status(200).json({
+      data: filtered,
+      total: filtered.length,
+    });
   } catch (err) {
     console.error('Unexpected error in /api/jobs:', err);
     return res.status(500).json({ error: 'Unexpected error', details: String(err) });
