@@ -2,10 +2,12 @@
 // Vercel serverless function that exposes Workday job postings
 // and supports CORS so you can call it from Webflow or any other origin.
 
-import { fetchWorkdayJobsPage, fetchAllWorkdayJobs } from '../workdayClient.js';
+import { fetchWorkdayJobsPage } from '../workdayClient.js';
 
 function setCorsHeaders(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*'); // or your Webflow domain instead of *
+  // You can tighten this to your Webflow domain if you want:
+  // e.g. 'https://travismathew-careers.webflow.io'
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
@@ -23,35 +25,26 @@ export default async function handler(req, res) {
     const limitParam = req.query?.limit;
     const offsetParam = req.query?.offset;
     const jobSiteId = req.query?.jobSite;
-    const allParam = req.query?.all; // if all=true, auto-paginate
 
-    // "limit" here means "how many jobs total you want back"
-    const requestedLimit = Number(limitParam ?? 50) || 50;
-    const offset = Number(offsetParam ?? 0) || 0;
-
-    // Per-page size we ask Workday for (capped at 100)
-    const pageSize = Math.min(requestedLimit, 100);
-
-    const shouldPaginate = requestedLimit > 100 || allParam === 'true';
-
-    let result;
-
-    if (shouldPaginate) {
-      // Multi-page mode: gather up to `requestedLimit` jobs via multiple calls
-      result = await fetchAllWorkdayJobs({
-        pageSize,
-        maxJobs: requestedLimit,
-        initialOffset: offset,
-        jobSiteId,
-      });
-    } else {
-      // Single page is enough
-      result = await fetchWorkdayJobsPage({
-        limit: pageSize,
-        offset,
-        jobSiteId,
-      });
+    // Workday's max is 100; you said you have ~78 roles,
+    // so 100 will comfortably grab everything in one call.
+    let requestedLimit = Number(limitParam ?? 50);
+    if (!Number.isFinite(requestedLimit) || requestedLimit <= 0) {
+      requestedLimit = 50;
     }
+    const limit = Math.min(requestedLimit, 100);
+
+    let offset = Number(offsetParam ?? 0);
+    if (!Number.isFinite(offset) || offset < 0) {
+      offset = 0;
+    }
+
+    // Single page call directly to Workday
+    const result = await fetchWorkdayJobsPage({
+      limit,
+      offset,
+      jobSiteId,
+    });
 
     return res.status(200).json({
       data: result.data,
