@@ -6,7 +6,14 @@ const CLIENT_SECRET = process.env.WORKDAY_CLIENT_SECRET;
 const REFRESH_TOKEN = process.env.WORKDAY_REFRESH_TOKEN;
 const JOBS_BASE_URL = process.env.WORKDAY_JOBS_BASE_URL;
 
+let cachedToken = null;
+let tokenExpiresAt = 0;
+
 async function getAccessToken() {
+  if (cachedToken && Date.now() < tokenExpiresAt) {
+    return cachedToken;
+  }
+
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     client_id: CLIENT_ID,
@@ -26,7 +33,10 @@ async function getAccessToken() {
   }
 
   const json = await resp.json();
-  return json.access_token;
+  const expiresIn = json.expires_in ?? 3600;
+  cachedToken = json.access_token;
+  tokenExpiresAt = Date.now() + (expiresIn - 300) * 1000;
+  return cachedToken;
 }
 
 export async function fetchWorkdayJobsPage({ limit = 50, offset = 0, jobSiteId } = {}) {
@@ -39,7 +49,7 @@ export async function fetchWorkdayJobsPage({ limit = 50, offset = 0, jobSiteId }
     url.searchParams.set('jobSite', jobSiteId);
   }
 
-  const resp = await fetch(url.toString(), {
+  const resp = await fetch(url, {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
   });
 

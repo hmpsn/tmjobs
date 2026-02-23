@@ -46,6 +46,7 @@ export default async function handler(req, res) {
       jobSiteId,
     });
 
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=120');
     return res.status(200).json({
       data: result.data,
       total: result.total,
